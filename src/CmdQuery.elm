@@ -1,18 +1,19 @@
 module CmdQuery exposing
-    ( get
-    , fetchNeeded, value
+    ( Query, State, Msg
+    , get
+    , fetchNeeded, value, update
     , flatten, return, andThen, andMap
     , map, map2, map3, map4, map5
-    , Query, State
+    , combine, initialState
     )
 
 {-|
 
-@docs Query State Msg
+@docs Query, State, Msg
 
 @docs get
 
-@docs fetchNeeded, value
+@docs fetchNeeded, value, update
 
 @docs flatten, return, andThen, andMap
 
@@ -53,6 +54,16 @@ type State comparable v
 
 type Msg comparable v
     = StateResult comparable v
+
+
+initialState : State comparable v
+initialState =
+    State { data = Dict.empty }
+
+
+update : Msg comparable v -> State comparable v -> State comparable v
+update (StateResult key val) (State { data }) =
+    State { data = Dict.insert key (Just val) data }
 
 
 flatten : Query comparable v (Query comparable v a) -> Query comparable v a

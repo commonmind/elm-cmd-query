@@ -1,4 +1,13 @@
-module CmdQuery.Http exposing (CachedResult, Expect, Query, expectJson, get)
+module CmdQuery.Http exposing
+    ( CachedResult
+    , Error
+    , Expect
+    , Msg
+    , Query
+    , State
+    , expectJson
+    , get
+    )
 
 import CSexpr.Encode as CE
 import CmdQuery
@@ -9,6 +18,14 @@ import Json.Encode as JE
 
 type alias Query a =
     CmdQuery.Query String CachedResult a
+
+
+type alias State =
+    CmdQuery.State String CachedResult
+
+
+type alias Msg =
+    CmdQuery.Msg String CachedResult
 
 
 type CachedResult
@@ -64,3 +81,11 @@ expectJson f dec =
             )
             >> f
         )
+
+
+
+-- Re exported from Http, for convienence
+
+
+type alias Error =
+    Http.Error
