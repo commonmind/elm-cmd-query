@@ -1,13 +1,44 @@
 module CmdQuery.Http exposing
-    ( CachedResult
+    ( Query, State, Msg
+    , get, Expect, expectJson
     , Error
-    , Expect
-    , Msg
-    , Query
-    , State
-    , expectJson
-    , get
+    , CachedResult
     )
+
+{-| This module allows you to make Http request in queries.
+
+The API closely follows the one from the `elm/http` package. The differences are basically:
+
+  - Instead of returning `Cmds`, when making requests, we reutrn `Query`s.
+  - The results of our queries are wrapped in a `Maybe`, which will be `Nothing`
+    if the request has not completed.
+
+Currently not every function from `elm/http` has an equivalent here. There are more to come,
+and contributions in this area are very welcome!
+
+
+# Shorthands
+
+@docs Query, State, Msg
+
+
+# Making requests
+
+Each of these corresponds to the same thing from the `http` package.
+
+@docs get, Expect, expectJson
+
+
+# Errors
+
+@docs Error
+
+
+# Low level
+
+@docs CachedResult
+
+-}
 
 import CSexpr.Encode as CE
 import CmdQuery
@@ -16,26 +47,41 @@ import Json.Decode as JD
 import Json.Encode as JE
 
 
+
+{- `CmdQuery.Query`, specialized for http requests. -}
+
+
 type alias Query a =
     CmdQuery.Query String CachedResult a
 
 
+{-| `CmdQuery.State`, specialized for http requests.
+-}
 type alias State =
     CmdQuery.State String CachedResult
 
 
+{-| `CmdQuery.Msg`, specialized for http requests.
+-}
 type alias Msg =
     CmdQuery.Msg String CachedResult
 
 
+{-| Saved request results. You shouldn't have to do anything with this yourself.
+-}
 type CachedResult
     = CRJson (Result Http.Error JE.Value)
 
 
+{-| Works just like `Http.Expect` from the `http` package. Note however that
+it's a different type, so you can't mix the two.
+-}
 type Expect msg
     = ExpectJSON (Result Http.Error JE.Value -> msg)
 
 
+{-| Make an HTTP GET request. Like `Http.get`.
+-}
 get : { url : String, expect : Expect msg } -> Query (Maybe msg)
 get { url, expect } =
     CmdQuery.get
@@ -83,9 +129,7 @@ expectJson f dec =
         )
 
 
-
--- Re exported from Http, for convienence
-
-
+{-| `Http.Error`, re-exported for convienence
+-}
 type alias Error =
     Http.Error
