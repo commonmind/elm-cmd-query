@@ -39,9 +39,9 @@ import Dict exposing (Dict)
 import Maybe.Extra
 
 
-type Query comparable cmd v a
-    = Flatten (Query comparable cmd v (Query comparable cmd v a))
-    | Get comparable cmd (Maybe v -> Query comparable cmd v a)
+type Query comparable v a
+    = Flatten (Query comparable v (Query comparable v a))
+    | Get comparable (Cmd v) (Maybe v -> Query comparable v a)
     | Return a
 
 
@@ -55,27 +55,26 @@ type Msg comparable v
     = StateResult comparable v
 
 
-flatten : Query comparable cmd v (Query comparable cmd v a) -> Query comparable cmd v a
+flatten : Query comparable v (Query comparable v a) -> Query comparable v a
 flatten =
     Flatten
 
 
-get : comparable -> cmd -> Query comparable cmd v (Maybe v)
+get : comparable -> Cmd v -> Query comparable v (Maybe v)
 get key cmd =
     Get key cmd return
 
 
-return : a -> Query comparable cmd v a
+return : a -> Query comparable v a
 return =
     Return
 
 
 fetchNeeded :
-    (cmd -> Cmd v)
-    -> State comparable v
-    -> Query comparable cmd v a
+    State comparable v
+    -> Query comparable v a
     -> ( State comparable v, Cmd (Msg comparable v) )
-fetchNeeded toCmd (State s) query =
+fetchNeeded (State s) query =
     case query of
         Return _ ->
             ( State s, Cmd.none )
@@ -88,11 +87,11 @@ fetchNeeded toCmd (State s) query =
                             f Nothing
 
                         ( s3, cmd2 ) =
-                            fetchNeeded toCmd s2 q2
+                            fetchNeeded s2 q2
                     in
                     ( s3
                     , Cmd.batch
-                        [ Cmd.map (StateResult key) (toCmd cmd)
+                        [ Cmd.map (StateResult key) cmd
                         , cmd2
                         ]
                     )
@@ -105,10 +104,10 @@ fetchNeeded toCmd (State s) query =
                     next <| State s
 
         Flatten q2 ->
-            fetchNeededAux toCmd (State s) q2
+            fetchNeededAux (State s) q2
 
 
-value : State comparable v -> Query comparable cmd v a -> a
+value : State comparable v -> Query comparable v a -> a
 value (State s) query =
     case query of
         Return x ->
@@ -125,7 +124,7 @@ value (State s) query =
                 |> valueAux (State s)
 
 
-map : (a -> b) -> Query comparable cmd v a -> Query comparable cmd v b
+map : (a -> b) -> Query comparable v a -> Query comparable v b
 map f query =
     case query of
         Flatten inner ->
@@ -144,12 +143,12 @@ map f query =
 -- and return -- unforunately elm can't abstract these out though.
 
 
-andThen : (a -> Query comparable cmd v b) -> Query comparable cmd v a -> Query comparable cmd v b
+andThen : (a -> Query comparable v b) -> Query comparable v a -> Query comparable v b
 andThen f x =
     flatten (map f x)
 
 
-andMap : Query comparable cmd v a -> Query comparable cmd v (a -> b) -> Query comparable cmd v b
+andMap : Query comparable v a -> Query comparable v (a -> b) -> Query comparable v b
 andMap x f =
     -- TODO: in principle, it should be possible to launch the commands for f and x
     -- independently, but the generic formulation based on andThen doesn't allow for this,
@@ -160,47 +159,47 @@ andMap x f =
 
 map2 :
     (a -> b -> c)
-    -> Query comparable cmd v a
-    -> Query comparable cmd v b
-    -> Query comparable cmd v c
+    -> Query comparable v a
+    -> Query comparable v b
+    -> Query comparable v c
 map2 fn a b =
     map fn a |> andMap b
 
 
 map3 :
     (a -> b -> c -> d)
-    -> Query comparable cmd v a
-    -> Query comparable cmd v b
-    -> Query comparable cmd v c
-    -> Query comparable cmd v d
+    -> Query comparable v a
+    -> Query comparable v b
+    -> Query comparable v c
+    -> Query comparable v d
 map3 fn a b c =
     map2 fn a b |> andMap c
 
 
 map4 :
     (a -> b -> c -> d -> e)
-    -> Query comparable cmd v a
-    -> Query comparable cmd v b
-    -> Query comparable cmd v c
-    -> Query comparable cmd v d
-    -> Query comparable cmd v e
+    -> Query comparable v a
+    -> Query comparable v b
+    -> Query comparable v c
+    -> Query comparable v d
+    -> Query comparable v e
 map4 fn a b c d =
     map3 fn a b c |> andMap d
 
 
 map5 :
     (a -> b -> c -> d -> e -> f)
-    -> Query comparable cmd v a
-    -> Query comparable cmd v b
-    -> Query comparable cmd v c
-    -> Query comparable cmd v d
-    -> Query comparable cmd v e
-    -> Query comparable cmd v f
+    -> Query comparable v a
+    -> Query comparable v b
+    -> Query comparable v c
+    -> Query comparable v d
+    -> Query comparable v e
+    -> Query comparable v f
 map5 fn a b c d e =
     map4 fn a b c d |> andMap e
 
 
-combine : List (Query comparable cmd v a) -> Query comparable cmd v (List a)
+combine : List (Query comparable v a) -> Query comparable v (List a)
 combine qs =
     case qs of
         [] ->
@@ -242,20 +241,19 @@ combine qs =
 -- Calling the *Aux functions instead seems to do the trick.
 
 
-mapAux : (a -> b) -> Query comparable cmd v a -> Query comparable cmd v b
+mapAux : (a -> b) -> Query comparable v a -> Query comparable v b
 mapAux =
     map
 
 
-valueAux : State comparable v -> Query comparable cmd v a -> a
+valueAux : State comparable v -> Query comparable v a -> a
 valueAux =
     value
 
 
 fetchNeededAux :
-    (cmd -> Cmd v)
-    -> State comparable v
-    -> Query comparable cmd v a
+    State comparable v
+    -> Query comparable v a
     -> ( State comparable v, Cmd (Msg comparable v) )
 fetchNeededAux =
     fetchNeeded
