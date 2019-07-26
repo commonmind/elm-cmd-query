@@ -211,13 +211,8 @@ map5 fn a b c d e =
 
 
 combine : List (Query comparable v a) -> Query comparable v (List a)
-combine qs =
-    case qs of
-        [] ->
-            return []
-
-        x :: xs ->
-            map2 (::) x (combine xs)
+combine =
+    List.foldr (map2 (::)) (return [])
 
 
 
