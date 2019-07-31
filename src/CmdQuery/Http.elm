@@ -3,6 +3,7 @@ module CmdQuery.Http exposing
     , get, Expect, expectJson
     , Error
     , CachedResult
+    , expectString
     )
 
 {-| This module allows you to make Http request in queries.
@@ -71,6 +72,7 @@ type alias Msg =
 -}
 type CachedResult
     = CRJson (Result Http.Error JE.Value)
+    | CRString (Result Http.Error String)
 
 
 {-| Works just like `Http.Expect` from the `http` package. Note however that
@@ -78,6 +80,7 @@ it's a different type, so you can't mix the two.
 -}
 type Expect msg
     = ExpectJSON (Result Http.Error JE.Value -> msg)
+    | ExpectString (Result Http.Error String -> msg)
 
 
 {-| Make an HTTP GET request. Like `Http.get`.
@@ -102,13 +105,33 @@ get { url, expect } =
 
 
 bodyTypeKey : Expect msg -> CE.Encoder
-bodyTypeKey (ExpectJSON _) =
-    CE.s "json"
+bodyTypeKey expect =
+    case expect of
+        ExpectJSON _ ->
+            CE.s "json"
+
+        ExpectString _ ->
+            CE.s "string"
 
 
 handleResult : Expect msg -> CachedResult -> msg
-handleResult (ExpectJSON f) (CRJson result) =
-    f result
+handleResult expect result =
+    let
+        mismatch want got =
+            Err <| Http.BadBody <| "Expected " ++ want ++ " but got " ++ got
+    in
+    case ( expect, result ) of
+        ( ExpectJSON f, CRJson json ) ->
+            f json
+
+        ( ExpectJSON f, CRString _ ) ->
+            f (mismatch "JSON" "String")
+
+        ( ExpectString f, CRString str ) ->
+            f str
+
+        ( ExpectString f, CRJson _ ) ->
+            f (mismatch "String" "JSON")
 
 
 convertExpect : Expect msg -> Http.Expect CachedResult
@@ -116,6 +139,9 @@ convertExpect expect =
     case expect of
         ExpectJSON _ ->
             Http.expectJson CRJson JD.value
+
+        ExpectString _ ->
+            Http.expectString CRString
 
 
 expectJson : (Result Http.Error a -> msg) -> JD.Decoder a -> Expect msg
@@ -127,6 +153,11 @@ expectJson f dec =
             )
             >> f
         )
+
+
+expectString : (Result Http.Error String -> msg) -> Expect msg
+expectString =
+    ExpectString
 
 
 {-| `Http.Error`, re-exported for convienence
