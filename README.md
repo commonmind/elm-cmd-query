@@ -10,8 +10,8 @@ It's commonly the case with single page applications that you want to
 display some information to the user, but some of it needs to be fetched
 from the server first. This means you have to keep track of what data
 has been fetched and what hasn't, and issue requests as appropriate.
-Especially when there are many things that must be fetched individually,
-this bookkeeping can be quite cumbersome.
+Especially when fetching all the data you want involves several Cmds,
+the book-keeping involved can be quite cumbersome.
 
 This library solves that. Rather than manually tracking outstanding
 requests and updating available data, you write a `Query`, which feels a
@@ -24,56 +24,104 @@ have the data and can use it.
 The library can examine your query and automatically figure out what
 commands need to be run to get missing data.
 
-Example of writing a query:
+# Example
 
 ```elm
--- TODO: finish this example
 import CmdQuery
 import CmdQuery.Http as Http
 import Json.Decode as D
 
-let players =
+-- QUERIES
+
+players =
     [ "Alice"
     , "Bob"
     , "Charlie"
     ]
 
-type alias GameData =
-    { playerScores : Dict String Int
-    , winner : Maybe String
+{-| Query the score for a particular player.
+-}
+playerScoreQuery : String -> Http.Query (Maybe (Result Http.Error Int))
+playerScoreQuery name =
+    -- The module CmdQuery.Http mirrors the elm/http package's API, so
+    -- you can write http code in much the same way -- you just get
+    -- a query instead of a Cmd.
+    Http.get
+        { url = "/scores/" ++ name
+        , expect = Http.expectJson D.int
+        }
+
+{-| Query the scores of all the players.
+-}
+allScoresQuery : Http.Query (Dict String (Maybe (Result Http.Error Int)))
+allScoresQuery =
+    -- Complex queries can be composed using many familiar functions
+    -- like `map`, `andThen`, and so on.
+    players
+    |> List.map
+        (\name ->
+            CmdQuery.map (\data -> (name, data)) (playerScoreQuery name)
+        )
+    |> CmdQuery.combine
+    |> CmdQuery.map Dict.fromList
+
+-- MODEL
+
+type alias Model = Model
+    -- We store a single `State` value in our model, which is managed by
+    -- the library.
+    { queryState : Http.State
     }
 
-getGameData : Http.Query GameData
-getGameData =
-    getPlayerScores
-        |> CmdQuery.map
-            (\scores ->
-                { playerScores = scores
-                , winner =
-                    Dict.toList scores
-                        |> List.map (\(k, maybeV) -> maybe.map v
-                    List.map (\k -> Dict.get k scores) players
-                        |> Maybe.Extra.combine
+type Msg
+    -- Our message type wraps updates to the state.
+    = UpdateState Http.Msg
 
-getPlayerScores : Http.Query (Dict String Int)
-getPlayerScores =
-    players
-        |> List.map
-            (\player ->
-                Http.get
-                    { url = "/player-score/" ++ player
-                    , expect =
-                        Http.expectJson Result.toMaybe D.int
-                    }
-                |> CmdQuery.map (Maybe.withDefault Nothing)
-                |> CmdQuery.map (\value -> (player, value))
-            )
-        |> CmdQuery.combine
-        |> CmdQuery.map
-            (List.filterMap
-                (\(k, maybeV) -> Maybe.map (\v -> (k, v)) maybeV)
-                >> Dict.fromList
-            )
+init : (Model, Cmd Msg)
+init =
+    let
+        ( state, cmd ) =
+            -- We use `fetchNeeded` to get a command that will fetch any missing
+            -- data. The updated state knows that missing data has been requested,
+            -- so it won't run the same commands twice.
+            CmdQuery.fetchNeeded CmdQuery.initialState allScoresQuery
+    in
+        ( Model { queryState = state }
+        , Cmd.map UpdateState cmd
+        )
+
+-- VIEW
+
+view : Model -> Html Msg
+view (Model {queryState}) =
+    -- CmdQuery.value gets the result of the query, based on available data
+    -- from the state.
+    viewData (CmdQuery.value queryState allScoresQuery)
+
+viewScore : Maybe (Result Http.Error Int) -> Html Msg
+viewScore maybeScore =
+    Nothing ->
+        text "Still loading..."
+
+    Err e ->
+        text ("There was a problem: " ++ Debug.toString err)
+
+    Ok score ->
+        text (String.fromInt score)
+
+viewData : Dict String (Maybe (Result Http.Error Int)) -> Html Msg
+viewData dict =
+    let data =
+            Dict.toList dict
+            |> List.map
+                (\(name, score) ->
+                    tr [] [ td [] [ text name ], td [] [ viewScore score ] ]
+                )
+    in table
+        []
+        (   tr [] [ th [] [ text "Player" ], th [] [ text "Score" ] ]
+            :: data
+        )
 ```
 
 # License
