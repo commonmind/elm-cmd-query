@@ -90,32 +90,48 @@ fetchNeeded (State s) query =
         Return _ ->
             ( State s, Cmd.none )
 
-        Get key cmd f ->
-            let
-                next s2 =
-                    let
-                        q2 =
-                            f Nothing
-
-                        ( s3, cmd2 ) =
-                            fetchNeeded s2 q2
-                    in
-                    ( s3
-                    , Cmd.batch
-                        [ Cmd.map (StateResult key) cmd
-                        , cmd2
-                        ]
-                    )
-            in
-            case Dict.get key s.data of
-                Nothing ->
-                    next <| State { s | data = Dict.insert key Nothing s.data }
-
-                Just val ->
-                    next <| State s
+        Flatten (Return q2) ->
+            fetchNeededAux (State s) q2
 
         Flatten q2 ->
             fetchNeededAux (State s) q2
+
+        Get key cmd f ->
+            let
+                ( s2, cmd2, val ) =
+                    case Dict.get key s.data of
+                        Nothing ->
+                            -- Haven't started this command yet; add an entry to the state
+                            -- to mark it in progress, run the command, and return `Nothing`
+                            -- as the value for now.
+                            ( State { s | data = Dict.insert key Nothing s.data }
+                            , cmd
+                            , Nothing
+                            )
+
+                        Just v ->
+                            -- We've already started this command; leave the state as is,
+                            -- don't run the command, and return whatever the dict says
+                            -- the value is.
+                            ( State s
+                            , Cmd.none
+                            , v
+                            )
+
+                q2 =
+                    -- compute the next query:
+                    f val
+
+                ( s3, cmd3 ) =
+                    -- see what else we need to do for the rest of the query:
+                    fetchNeeded s2 q2
+            in
+            ( s3
+            , Cmd.batch
+                [ Cmd.map (StateResult key) cmd2
+                , cmd3
+                ]
+            )
 
 
 value : State comparable v -> Query comparable v a -> a
