@@ -41,9 +41,10 @@ import Maybe.Extra
 
 
 type Query comparable v a
-    = Flatten (Query comparable v (Query comparable v a))
-    | Get comparable (Cmd v) (Maybe v -> Query comparable v a)
-    | Return a
+    = Query
+        { fetcher : State comparable v -> ( State comparable v, Cmd (State comparable v -> State comparable v) )
+        , value : State comparable v -> a
+        }
 
 
 type State comparable v
@@ -53,7 +54,68 @@ type State comparable v
 
 
 type Msg comparable v
-    = StateResult comparable v
+    = StateUpdate (State comparable v -> State comparable v)
+
+
+return : a -> Query comparable v a
+return x =
+    Query
+        { fetcher = \s -> ( s, Cmd.none )
+        , value = \_ -> x
+        }
+
+
+map : (a -> b) -> Query comparable v a -> Query comparable v b
+map f (Query q) =
+    Query
+        { fetcher = q.fetcher
+        , value = q.value >> f
+        }
+
+
+andMap : Query comparable v a -> Query comparable v (a -> b) -> Query comparable v b
+andMap (Query x) (Query f) =
+    Query
+        { fetcher =
+            \s ->
+                let
+                    ( s2, cmd1 ) =
+                        x.fetcher s
+
+                    ( s3, cmd2 ) =
+                        f.fetcher s2
+                in
+                ( s3, Cmd.batch [ cmd1, cmd2 ] )
+        , value =
+            \s ->
+                f.value s (x.value s)
+        }
+
+
+flatten : Query comparable v (Query comparable v a) -> Query comparable v a
+flatten (Query q) =
+    Query
+        { fetcher =
+            \s ->
+                let
+                    ( s2, cmd1 ) =
+                        q.fetcher s
+
+                    (Query v) =
+                        q.value s2
+
+                    ( s3, cmd2 ) =
+                        v.fetcher s2
+                in
+                ( s3, Cmd.batch [ cmd1, cmd2 ] )
+        , value =
+            \s ->
+                let
+                    (Query v) =
+                        q.value s
+                in
+                v.value s
+        }
 
 
 initialState : State comparable v
@@ -62,106 +124,49 @@ initialState =
 
 
 update : Msg comparable v -> State comparable v -> State comparable v
-update (StateResult key val) (State { data }) =
-    State { data = Dict.insert key (Just val) data }
-
-
-flatten : Query comparable v (Query comparable v a) -> Query comparable v a
-flatten =
-    Flatten
+update (StateUpdate f) =
+    f
 
 
 get : comparable -> Cmd v -> Query comparable v (Maybe v)
 get key cmd =
-    Get key cmd return
+    Query
+        { fetcher =
+            \(State s) ->
+                case Dict.get key s.data of
+                    Just _ ->
+                        ( State s, Cmd.none )
 
-
-return : a -> Query comparable v a
-return =
-    Return
+                    Nothing ->
+                        ( State { data = Dict.insert key Nothing s.data }
+                        , cmd
+                            |> Cmd.map
+                                (\v (State s2) ->
+                                    State { data = Dict.insert key (Just v) s2.data }
+                                )
+                        )
+        , value =
+            \(State s) ->
+                Dict.get key s.data
+                    |> Maybe.Extra.join
+        }
 
 
 fetchNeeded :
     State comparable v
     -> Query comparable v a
     -> ( State comparable v, Cmd (Msg comparable v) )
-fetchNeeded (State s) query =
-    case query of
-        Return _ ->
-            ( State s, Cmd.none )
-
-        Flatten (Return q2) ->
-            fetchNeededAux (State s) q2
-
-        Flatten q2 ->
-            fetchNeededAux (State s) q2
-
-        Get key cmd f ->
-            let
-                ( s2, cmd2, val ) =
-                    case Dict.get key s.data of
-                        Nothing ->
-                            -- Haven't started this command yet; add an entry to the state
-                            -- to mark it in progress, run the command, and return `Nothing`
-                            -- as the value for now.
-                            ( State { s | data = Dict.insert key Nothing s.data }
-                            , cmd
-                            , Nothing
-                            )
-
-                        Just v ->
-                            -- We've already started this command; leave the state as is,
-                            -- don't run the command, and return whatever the dict says
-                            -- the value is.
-                            ( State s
-                            , Cmd.none
-                            , v
-                            )
-
-                q2 =
-                    -- compute the next query:
-                    f val
-
-                ( s3, cmd3 ) =
-                    -- see what else we need to do for the rest of the query:
-                    fetchNeeded s2 q2
-            in
-            ( s3
-            , Cmd.batch
-                [ Cmd.map (StateResult key) cmd2
-                , cmd3
-                ]
-            )
+fetchNeeded s (Query q) =
+    let
+        ( s2, cmd ) =
+            q.fetcher s
+    in
+    ( s2, Cmd.map StateUpdate cmd )
 
 
 value : State comparable v -> Query comparable v a -> a
-value (State s) query =
-    case query of
-        Return x ->
-            x
-
-        Get key _ f ->
-            Dict.get key s.data
-                |> Maybe.Extra.join
-                |> f
-                |> value (State s)
-
-        Flatten query2 ->
-            valueAux (State s) query2
-                |> valueAux (State s)
-
-
-map : (a -> b) -> Query comparable v a -> Query comparable v b
-map f query =
-    case query of
-        Flatten inner ->
-            Flatten <| mapAux (mapAux f) inner
-
-        Get key cmd oldF ->
-            Get key cmd (oldF >> mapAux f)
-
-        Return x ->
-            Return (f x)
+value s (Query q) =
+    q.value s
 
 
 
@@ -173,15 +178,6 @@ map f query =
 andThen : (a -> Query comparable v b) -> Query comparable v a -> Query comparable v b
 andThen f x =
     flatten (map f x)
-
-
-andMap : Query comparable v a -> Query comparable v (a -> b) -> Query comparable v b
-andMap x f =
-    -- TODO: in principle, it should be possible to launch the commands for f and x
-    -- independently, but the generic formulation based on andThen doesn't allow for this,
-    -- because `fetchNeeded` can't see through it. It would be nice to update this so that
-    -- it allows both commands to run concurrently.
-    x |> andThen (\x2 -> f |> andThen (\f2 -> return (f2 x2)))
 
 
 map2 :
@@ -229,53 +225,3 @@ map5 fn a b c d e =
 combine : List (Query comparable v a) -> Query comparable v (List a)
 combine =
     List.foldr (map2 (::)) (return [])
-
-
-
--- Helpers to work around a quirk in Elm's type inference.
---
--- namely, each function `fooAux` is exactly the same as `foo`, but we need the
--- indirection becuase the functions call themselves recursivley, where the recursive
--- call has a different type than the original. As a toy example, this will not
--- compile:
---
--- ```
--- type Wrap a = Raw a | Wrapped (Wrap (Wrap a))
---
--- unwrap : Wrap a -> a
--- unwrap arg =
---     case arg of
---         Raw x ->
---             x
---
---         Wrapped next ->
---             unwrap (unwrap next)
---
--- use = unwrap (Wrapped (Wrapped (Raw Int)))
--- ```
---
--- The reason is that the original call to `unwrap` (from `use)` has type
--- `Wrapped Int -> Int`, but outer recursive call must have type
--- `Wrapped (Wrapped Int) -> Wrapped Int`. Elm has lost track of the fact
--- that the type parameter can be *anything*, and so insists that it must
--- be the same in both calls.
---
--- Calling the *Aux functions instead seems to do the trick.
-
-
-mapAux : (a -> b) -> Query comparable v a -> Query comparable v b
-mapAux =
-    map
-
-
-valueAux : State comparable v -> Query comparable v a -> a
-valueAux =
-    value
-
-
-fetchNeededAux :
-    State comparable v
-    -> Query comparable v a
-    -> ( State comparable v, Cmd (Msg comparable v) )
-fetchNeededAux =
-    fetchNeeded
